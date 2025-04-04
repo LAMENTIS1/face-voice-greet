@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Voice Assistant</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            background-color: #f0f2f5;
+            color: #333;
+            padding: 20px;
+        }
+
+        .logo {
+            font-size: 32px;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 500px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .mic-button {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background-color: #4285f4;
+            border: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .mic-button svg {
+            width: 40px;
+            height: 40px;
+            fill: white;
+            transition: all 0.3s ease;
+        }
+
+        .mic-button.listening {
+            background-color: #ea4335;
+            animation: pulse 1.5s infinite;
+        }
+
+        .mic-button.speaking {
+            background-color: #34a853;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+
+        .transcript-container {
+            width: 100%;
+            min-height: 100px;
+            max-height: 200px;
+            overflow-y: auto;
+            background-color: white;
+            border-radius: 12px;
+            padding: 16px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            transition: opacity 0.3s ease;
+            opacity: 0;
+            margin-top: 20px;
+        }
+
+        .transcript-container.active {
+            opacity: 1;
+        }
+
+        .status {
+            font-size: 14px;
+            color: #666;
+            text-align: center;
+            height: 20px;
+            margin-top: 10px;
+        }
+
+        .eyes-wrapper {
+            display: flex;
+            justify-content: space-between;
+            width: 100px;
+            margin: 10px 0;
+        }
+
+        .eye {
+            width: 15px;
+            height: 15px;
+            background-color: #333;
+            border-radius: 50%;
+            transition: 0.2s;
+        }
+
+        .eyes-wrapper.active .eye {
+            background-color: #4285f4;
+        }
+
+        .button-container {
+            display: flex;
+            gap: 10px;
+        }
+
+        .emotion-btn {
+            padding: 10px 20px;
+            border-radius: 5px;
+            border: none;
+            cursor: pointer;
+            background-color: #4285f4;
+            color: white;
+            transition: background-color 0.3s ease;
+        }
+
+        .emotion-btn:hover {
+            background-color: #357ae8;
+        }
+        
+    </style>
+</head>
+<body>
+    <div class="logo">MOBIUS</div>
+    <div id="recordingIndicator" class="recording-indicator"></div>
+    <div id="longpressIndicator" class="longpress-indicator"></div>
+
+    <!-- Mobius UI -->
+    <div class="container">
+        <button id="micButton" class="mic-button">
+            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
+                <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+            </svg>
+        </button>
+
+        <div id="status" class="status">Tap to speak</div>
+        
+        <div class="eyes-wrapper">
+            <div id="leftEye" class="eye"></div>
+            <div id="rightEye" class="eye"></div>
+        </div>
+
+        <div id="transcriptContainer" class="transcript-container">
+            <div id="transcriptText"></div>
+        </div>
+
+        <div class="button-container">
+            <button onclick="setEmotion('default')" class="emotion-btn">Default</button>
+            <button onclick="setEmotion('listening')" class="emotion-btn">Listening</button>
+            <button onclick="setEmotion('thinking')" class="emotion-btn">Thinking</button>
+            <button onclick="setEmotion('blinking')" class="emotion-btn">Blinking</button>
+        </div>
+    </div>
+
+    <script>
+        // DOM Elements
+        const micButton = document.getElementById('micButton');
+        const status = document.getElementById('status');
+        const transcriptContainer = document.getElementById('transcriptContainer');
+        const transcriptText = document.getElementById('transcriptText');
+        const leftEye = document.getElementById('leftEye');
+        const rightEye = document.getElementById('rightEye');
+
+        // State variables
+        let recognition = null;
+        let isListening = false;
+        let isProcessingAPI = false;
+        let speaking = false;
+        let silenceTimeout = null;
+
+        // Initialize Speech Recognition
+        function initializeSpeechRecognition() {
+            if (!('SpeechRecognition' in window || 'webkitSpeechRecognition' in window)) {
+                status.textContent = 'Speech recognition not supported in this browser';
+                return null;
+            }
+
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            const newRecognition = new SpeechRecognition();
+            newRecognition.continuous = true;
+            newRecognition.interimResults = true;
+            newRecognition.maxAlternatives = 1;
+            newRecognition.lang = 'en-US';
+
+            return newRecognition;
+        }
+
+        // Start listening
+        function startListening() {
+            if (isListening || isProcessingAPI) return;
+
+            try {
+                if (recognition) {
+                    recognition.stop();
+                }
+
+                recognition = initializeSpeechRecognition();
+                if (!recognition) {
+                    status.textContent = 'Could not initialize speech recognition';
+                    return;
+                }
+
+                micButton.classList.add('listening');
+                status.textContent = 'Listening...';
+                transcriptContainer.classList.add('active');
+                transcriptText.textContent = '';
+
+                recognition.onstart = function () {
+                    isListening = true;
+                };
+
+                recognition.onresult = function (event) {
+                    clearTimeout(silenceTimeout);
+                    const lastResult = event.results[event.results.length - 1];
+                    const transcript = lastResult[0].transcript.trim();
+                    const isFinalResult = lastResult.isFinal;
+
+                    transcriptText.textContent = transcript;
+
+                    if (isFinalResult) {
+                        processFinalTranscript(transcript);
+                    } else {
+                        silenceTimeout = setTimeout(() => {
+                            processFinalTranscript(transcript);
+                        }, 2000);
+                    }
+                };
+
+                recognition.onerror = function (event) {
+                    console.error('Speech recognition error:', event.error);
+                    if (event.error === 'no-speech') {
+                        restartRecognition();
+                    } else if (event.error === 'aborted' || event.error === 'network') {
+                        stopListening();
+                    }
+                };
+
+                recognition.onend = function () {
+                    if (isListening && !isProcessingAPI) {
+                        restartRecognition();
+                    } else {
+                        if (!isProcessingAPI && !speaking) {
+                            transcriptContainer.classList.remove('active');
+                            setTimeout(() => {
+                                transcriptText.textContent = '';
+                            }, 300);
+                        }
+                    }
+                };
+
+                recognition.start();
+            } catch (error) {
+                console.error('Failed to start speech recognition:', error);
+                status.textContent = 'Error starting recognition';
+                isListening = false;
+                micButton.classList.remove('listening');
+            }
+        }
+
+        // Stop listening
+        function stopListening() {
+            if (recognition) {
+                isListening = false;
+                recognition.stop();
+                micButton.classList.remove('listening');
+                status.textContent = 'Tap to speak';
+                if (!isProcessingAPI && !speaking) {
+                    transcriptContainer.classList.remove('active');
+                }
+            }
+        }
+
+        // Process final transcript
+        function processFinalTranscript(transcript) {
+            if (!transcript) return;
+
+            console.log('Processing final transcript:', transcript);
+
+            isProcessingAPI = true;
+
+            if (isListening) {
+                stopListening();
+            }
+
+            status.textContent = 'Processing...';
+
+            query({ transcript: transcript })
+                .then(response => {
+                    console.log('API response:', response);
+
+                    transcriptText.textContent = response.text;
+                    status.textContent = 'Response';
+                    playAudio(response.audio_url);
+                })
+                .catch(error => {
+                    console.error('API error:', error);
+                    transcriptText.textContent = 'Sorry, there was an error processing your request.';
+                    status.textContent = 'Error';
+                })
+                .finally(() => {
+                    isProcessingAPI = false;
+                });
+        }
+
+        // API query function
+        async function query(data) {
+            try {
+                const response = await fetch("/process", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify(data)
+                });
+
+                if (!response.ok) {
+                    throw new Error(`API responded with status: ${response.status}`);
+                }
+
+                return await response.json();
+            } catch (error) {
+                console.error('API query error:', error);
+                throw error;
+            }
+        }
+
+        // Initialize the app
+        function init() {
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                navigator.mediaDevices.getUserMedia({ audio: true })
+                    .then(() => {
+                        console.log('Microphone permission granted');
+                    })
+                    .catch(error => {
+                        console.error('Microphone permission denied:', error);
+                        status.textContent = 'Microphone access denied';
+                    });
+            }
+
+            micButton.addEventListener('click', () => {
+                if (speaking) {
+                    stopSpeaking();
+                } else if (isListening) {
+                    stopListening();
+                    stopSpeaking();
+                } else if (!isProcessingAPI) {
+                    startListening();
+                }
+            });
+        }
+
+        // Initialize when page loads
+        document.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+</html>
